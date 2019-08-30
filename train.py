@@ -11,10 +11,10 @@ import time
 import tqdm
 from tensorflow.core.protobuf import rewriter_config_pb2
 
-import model, sample, encoder
-from load_dataset import load_dataset, Sampler
-from accumulate import AccumulatingOptimizer
-import memory_saving_gradients
+import src.model as model, src.sample as sample, src.encoder as encoder
+from src.load_dataset import load_dataset, Sampler
+from src.accumulate import AccumulatingOptimizer
+import src.memory_saving_gradients as memory_saving_gradients
 
 CHECKPOINT_DIR = 'checkpoint'
 SAMPLE_DIR = 'samples'
@@ -25,7 +25,7 @@ parser = argparse.ArgumentParser(
     formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 
 parser.add_argument('--dataset', metavar='PATH', type=str, required=True, help='Input file, directory, or glob pattern (utf-8 text, or preencoded .npz files).')
-parser.add_argument('--model_name', metavar='MODEL', type=str, default='117M', help='Pretrained model name')
+parser.add_argument('--model_name', metavar='MODEL', type=str, default='345M', help='Pretrained model name')
 parser.add_argument('--combine', metavar='CHARS', type=int, default=50000, help='Concatenate input files with <|endoftext|> separator into chunks of this minimum size')
 
 parser.add_argument('--batch_size', metavar='SIZE', type=int, default=1, help='Batch size')
@@ -39,12 +39,12 @@ parser.add_argument('--noise', type=float, default=0.0, help='Add noise to input
 parser.add_argument('--top_k', type=int, default=40, help='K for top-k sampling.')
 parser.add_argument('--top_p', type=float, default=0.0, help='P for top-p sampling. Overrides top_k if set > 0.')
 
-parser.add_argument('--restore_from', type=str, default='latest', help='Either "latest", "fresh", or a path to a checkpoint file')
-parser.add_argument('--run_name', type=str, default='run1', help='Run id. Name of subdirectory in checkpoint/ and samples/')
-parser.add_argument('--sample_every', metavar='N', type=int, default=100, help='Generate samples every N steps')
+parser.add_argument('--restore_from', type=str, default='fresh', help='Either "latest", "fresh", or a path to a checkpoint file')
+parser.add_argument('--run_name', type=str, default='345M_run1', help='Run id. Name of subdirectory in checkpoint/ and samples/')
+parser.add_argument('--sample_every', metavar='N', type=int, default=50, help='Generate samples every N steps')
 parser.add_argument('--sample_length', metavar='TOKENS', type=int, default=1023, help='Sample this many tokens')
-parser.add_argument('--sample_num', metavar='N', type=int, default=1, help='Generate this many samples')
-parser.add_argument('--save_every', metavar='N', type=int, default=1000, help='Write a checkpoint every N steps')
+parser.add_argument('--sample_num', metavar='N', type=int, default=5, help='Generate this many samples')
+parser.add_argument('--save_every', metavar='N', type=int, default=100, help='Write a checkpoint every N steps')
 
 parser.add_argument('--val_dataset', metavar='PATH', type=str, default=None, help='Dataset for validation loss, defaults to --dataset.')
 parser.add_argument('--val_batch_size', metavar='SIZE', type=int, default=2, help='Batch size for validation.')
@@ -181,7 +181,7 @@ def main():
             # Sample from validation set once with fixed seed to make
             # it deterministic during training as well as across runs.
             val_data_sampler = Sampler(val_chunks, seed=1)
-            val_batches = [[val_data_sampler.sample(1024) for _ in range(args.val_batch_size)]
+            val_batches = [[val_data_sampler.sample(1023) for _ in range(args.val_batch_size)]
                            for _ in range(args.val_batch_count)]
 
         counter = 1
@@ -209,18 +209,19 @@ def main():
             print('Generating samples...')
             context_tokens = data_sampler.sample(1)
             all_text = []
-            index = 0
-            while index < args.sample_num:
+            generated = 0
+            for _ in range(args.sample_num // args.batch_size):
                 out = sess.run(
                     tf_sample,
-                    feed_dict={context: args.batch_size * [context_tokens]})
-                for i in range(min(args.sample_num - index, args.batch_size)):
+                    feed_dict={context: [context_tokens for _ in range(args.batch_size)]})
+                for i in range(min(args.sample_num - generated, args.batch_size)):
+                    generated += 1
                     text = enc.decode(out[i])
                     text = '======== SAMPLE {} ========\n{}\n'.format(
-                        index + 1, text)
+                        generated + 1, text)
                     all_text.append(text)
-                    index += 1
-            print(text)
+            for sample in all_text:
+                print(sample)
             maketree(os.path.join(SAMPLE_DIR, args.run_name))
             with open(
                     os.path.join(SAMPLE_DIR, args.run_name,
