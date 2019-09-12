@@ -6,3 +6,4 @@ samples
 datasets/
 encoded_datasets/
 generated/
+*.tar.gz
